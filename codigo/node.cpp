@@ -47,7 +47,7 @@ bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
     if(rBlock->index == 1 and last_block_in_chain->index == 0){
 
       // node_blocks[string(rBlock->block_hash)]=*rBlock;
-      last_block_in_chain = rBlock;
+      *last_block_in_chain = *rBlock;
       printf("[%d] Agregado a la lista bloque con index %d enviado por %d \n", mpi_rank, rBlock->index,status->MPI_SOURCE);
       return true;
     }
@@ -57,7 +57,7 @@ bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
     //y el bloque anterior apuntado por el recibido es mí último actual,
     //entonces lo agrego como nuevo último.
     if(rBlock->index + 1 == last_block_in_chain->index and rBlock->previous_block_hash == last_block_in_chain->nonce){
-      last_block_in_chain = rBlock;      
+      *last_block_in_chain = *rBlock;      
       printf("[%d] Agregado a la lista bloque con index %d enviado por %d \n", mpi_rank, rBlock->index,status->MPI_SOURCE);
       return true;
     }
@@ -179,7 +179,7 @@ int node(){
 
   //TODO: Crear thread para minar
 
-  phtread_t thread;
+  pthread_t thread;
 
   pthread_create(&thread, NULL, &proof_of_work,NULL);
 

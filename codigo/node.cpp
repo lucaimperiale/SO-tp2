@@ -17,17 +17,52 @@ map<string,Block> node_blocks;
 //Si nos separan más de VALIDATION_BLOCKS bloques de distancia entre las cadenas, se descarta por seguridad
 bool verificar_y_migrar_cadena(const Block *rBlock, const MPI_Status *status){
 
+  int missing_blocks = rBlock->index - last_block_in_chain->index;
+
   //TODO: Enviar mensaje TAG_CHAIN_HASH
+
+  MPI_Send(rBlock,1,MPI_BLOCK,rBlock->node_owner_number,TAG_CHAIN_HASH,MPI_COMM_WORLD);
 
   Block *blockchain = new Block[VALIDATION_BLOCKS];
 
-  //TODO: Recibir mensaje TAG_CHAIN_RESPONSE
+//TODO: Recibir mensaje TAG_CHAIN_RESPONSE
 
+  MPI_Recv(blockchain,VALIDATION_BLOCKS,MPI_BLOCK,rBlock->node_owner_number,TAG_CHAIN_RESPONSE,MPI_COMM_WORLD);
+  
   //TODO: Verificar que los bloques recibidos
   //sean válidos y se puedan acoplar a la cadena
-    //delete []blockchain;
-    //return true;
 
+  bool validate_msg = true;
+
+  validate_msg &= blockchain[0].block_hash == rBlock->block_hash;
+  validate_msg &= blockchain[0].index == rBlock->index;
+  validate_msg &= blockchain[0].block_hash == block_to_hash(rBlock->block_hash);
+
+  
+  for (int i =1;i<missing_blocks;i++){
+    validate_msg &= blockchain[i].previous_block_hash == blockchain[i-1].block_hash;
+    validate_msg &= blockchain[i].index == blockchain[i-1].index + 1;
+  }
+
+  if(validate_msg){
+
+
+      //TODO: si dentro de los bloques recibidos, alguno ya estaba adentro de nodeblocks(o el ultimo tiene indice 1),
+      // entonces ya puedo reconstruir la cadena. agrego todos y actualizo lastblockinchain
+      int i = 1;
+      while (i<missing_blocks){
+        if(node_blocks.count(blockchain[i].block_hash) == 1){
+          
+        }
+        i++;
+      }
+      //delete []blockchain;
+      //return true;
+  
+  
+  }
+
+  //si el msg esta mal o no encontre el bloque que buscaba descarto todo y devuelvo false  
 
   delete []blockchain;
   return false;

@@ -106,8 +106,17 @@ bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
 void broadcast_block(const Block *block){
   //No enviar a mí mismo
   //TODO: Completar
-
-
+  int i = mpi_rank-1, j = mpi_rank+1;
+  while(i>=0 && j<total_nodes){
+    if(i>=0){
+      MPI_Send(block,1,*MPI_BLOCK,i,TAG_NEW_BLOCK,MPI_COMM_WORLD);
+      i--;
+    }
+    if(j<total_nodes){
+      MPI_Send(block,1,*MPI_BLOCK,j,TAG_NEW_BLOCK,MPI_COMM_WORLD);
+      j++;
+    }
+  }
 }
 
 //Proof of work

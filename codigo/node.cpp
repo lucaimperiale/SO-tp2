@@ -62,12 +62,6 @@ bool verificar_y_migrar_cadena(const Block *rBlock, const MPI_Status *status){
   
   }
 
-  //si el msg esta mal o no encontre el bloque que buscaba descarto todo y devuelvo false  
-
-  delete []blockchain;
-  return false;
-}
-
 //Verifica que el bloque tenga que ser incluido en la cadena, y lo agrega si corresponde
 bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
   if(valid_new_block(rBlock)){
@@ -227,16 +221,48 @@ int node(){
 
   pthread_create(&thread, NULL, &proof_of_work,NULL);
 
+      //TODO: Recibir mensajes de otros nodos
   while(true){
 
-      //TODO: Recibir mensajes de otros nodos
-
+    int flg = 0;
+    MPI_Status sttsaux;
       //TODO: Si es un mensaje de nuevo bloque, llamar a la función
       // validate_block_for_chain con el bloque recibido y el estado de MPI
-
+    MPI_Iprobe(MPI_ANY_SOURCE, TAG_NEW_BLOCK,MPI_COMM_WORLD, &flg, &sttsaux);
+    if(flg){
+      Block *buf = new Block;
+      MPI_Status* stts = new MPI_Status;
+      MPI_Recv(buf, 1, *MPI_BLOCK, MPI_ANY_SOURCE, TAG_NEW_BLOCK,MPI_COMM_WORLD, stts);
+      validate_block_for_chain(buf, stts);
+      delete buf;
+      delete stts;
+    }
       //TODO: Si es un mensaje de pedido de cadena,
       //responderlo enviando los bloques correspondientes
-
+    flg = 0;
+    MPI_Iprobe(MPI_ANY_SOURCE, TAG_CHAIN_HASH,MPI_COMM_WORLD, &flg, &sttsaux);
+    if(flg){
+      flg = 0;
+      int i = 0;
+      while(!flg){
+      	MPI_Iprobe(MPI_ANY_SOURCE, TAG_CHAIN_HASH,MPI_COMM_WORLD, &flg, &sttsaux);
+      	i++;
+      }
+      Block *buf = new Block;
+      MPI_Status* stts = new MPI_Status;
+      MPI_Recv(buf, 1, *MPI_BLOCK, i, TAG_CHAIN_HASH,MPI_COMM_WORLD, stts);
+      int missing_blocks = last_block_in_chain->index - buf->index;
+      delete buf;
+      delete stts;
+      Block *blcks = new Block[missing_blocks];
+      Block *it = last_block_in_chain;
+      for(int j = missing_blocks; j<=0; j--){
+        blcks[j]=*it;
+        it=&node_blocks[it->previous_block_hash];
+      }
+      MPI_Send(blcks,missing_blocks,*MPI_BLOCK,i,TAG_CHAIN_RESPONSE,MPI_COMM_WORLD);
+      delete blcks;
+    }
   }
 
 

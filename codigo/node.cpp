@@ -17,50 +17,70 @@ map<string,Block> node_blocks;
 //Si nos separan más de VALIDATION_BLOCKS bloques de distancia entre las cadenas, se descarta por seguridad
 bool verificar_y_migrar_cadena(const Block *rBlock, const MPI_Status *status){
 
-  int missing_blocks = rBlock->index - last_block_in_chain->index;
+  MPI_Status sttsaux;
+
+  // int missing_blocks = rBlock->index - last_block_in_chain->index;
 
   //TODO: Enviar mensaje TAG_CHAIN_HASH
 
-  MPI_Send(rBlock,1,MPI_BLOCK,rBlock->node_owner_number,TAG_CHAIN_HASH,MPI_COMM_WORLD);
+  MPI_Send(rBlock->block_hash,256,MPI_CHAR,rBlock->node_owner_number,TAG_CHAIN_HASH,MPI_COMM_WORLD);
 
   Block *blockchain = new Block[VALIDATION_BLOCKS];
 
 //TODO: Recibir mensaje TAG_CHAIN_RESPONSE
 
-  MPI_Recv(blockchain,VALIDATION_BLOCKS,MPI_BLOCK,rBlock->node_owner_number,TAG_CHAIN_RESPONSE,MPI_COMM_WORLD);
+  MPI_Recv(blockchain,VALIDATION_BLOCKS,*MPI_BLOCK,rBlock->node_owner_number,TAG_CHAIN_RESPONSE,MPI_COMM_WORLD,&sttsaux);
   
   //TODO: Verificar que los bloques recibidos
   //sean válidos y se puedan acoplar a la cadena
 
   bool validate_msg = true;
+  string aux_result;
 
   validate_msg &= blockchain[0].block_hash == rBlock->block_hash;
   validate_msg &= blockchain[0].index == rBlock->index;
-  validate_msg &= blockchain[0].block_hash == block_to_hash(rBlock->block_hash);
+  block_to_hash(rBlock,aux_result);
+  validate_msg &= blockchain[0].block_hash == aux_result;
 
-  
-  for (int i =1;i<missing_blocks;i++){
+  int i = 1;
+  for (;i<VALIDATION_BLOCKS;i++){
+    if(blockchain[i-1].index == 1){
+      break;
+    }
     validate_msg &= blockchain[i].previous_block_hash == blockchain[i-1].block_hash;
     validate_msg &= blockchain[i].index == blockchain[i-1].index + 1;
   }
+  int received_blocks = i;
 
   if(validate_msg){
 
 
       //TODO: si dentro de los bloques recibidos, alguno ya estaba adentro de nodeblocks(o el ultimo tiene indice 1),
       // entonces ya puedo reconstruir la cadena. agrego todos y actualizo lastblockinchain
-      int i = 1;
-      while (i<missing_blocks){
-        if(node_blocks.count(blockchain[i].block_hash) == 1){
+      i = 0;
+      while (i<received_blocks){
+        if(node_blocks.count(blockchain[i].block_hash) == 1 or blockchain[i].index == 1){
+          node_blocks[string(blockchain[0].block_hash)]=blockchain[0];
+          auto it = node_blocks.find(string(blockchain[0].block_hash));
+          last_block_in_chain = &it->second;
           
+          for(int j = 0 ; j<i ; j++){
+            node_blocks[string(blockchain[j].block_hash)]=blockchain[j];
+          }
+          delete []blockchain;
+          return true;
         }
         i++;
       }
-      //delete []blockchain;
-      //return true;
   
   
   }
+
+  //si el msg esta mal o no encontre el bloque que buscaba descarto todo y devuelvo false  
+
+  delete []blockchain;
+  return false;
+}
 
 //Verifica que el bloque tenga que ser incluido en la cadena, y lo agrega si corresponde
 bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
@@ -69,6 +89,8 @@ bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
     //Agrego el bloque al diccionario, aunque no
     //necesariamente eso lo agrega a la cadena
     node_blocks[string(rBlock->block_hash)]=*rBlock;  //PREGUNTAR
+    auto it = node_blocks.find(string(rBlock->block_hash));
+    Block* new_last_block = &it->second;
 
     //TODO: Si el índice del bloque recibido es 1
     //y mí último bloque actual tiene índice 0,
@@ -76,7 +98,7 @@ bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
     if(rBlock->index == 1 and last_block_in_chain->index == 0){
 
       // node_blocks[string(rBlock->block_hash)]=*rBlock;
-      *last_block_in_chain = *rBlock;
+      last_block_in_chain = new_last_block;
       printf("[%d] Agregado a la lista bloque con index %d enviado por %d \n", mpi_rank, rBlock->index,status->MPI_SOURCE);
       return true;
     }
@@ -86,7 +108,7 @@ bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
     //y el bloque anterior apuntado por el recibido es mí último actual,
     //entonces lo agrego como nuevo último.
     if(rBlock->index + 1 == last_block_in_chain->index and rBlock->previous_block_hash == last_block_in_chain->nonce){
-      *last_block_in_chain = *rBlock;      
+      last_block_in_chain = new_last_block;      
       printf("[%d] Agregado a la lista bloque con index %d enviado por %d \n", mpi_rank, rBlock->index,status->MPI_SOURCE);
       return true;
     }
@@ -243,25 +265,34 @@ int node(){
     MPI_Iprobe(MPI_ANY_SOURCE, TAG_CHAIN_HASH,MPI_COMM_WORLD, &flg, &sttsaux);
     if(flg){
       flg = 0;
-      int i = 0;
-      while(!flg){
-      	MPI_Iprobe(MPI_ANY_SOURCE, TAG_CHAIN_HASH,MPI_COMM_WORLD, &flg, &sttsaux);
-      	i++;
-      }
-      Block *buf = new Block;
+      // int i = 0;
+      // while(!flg){
+      // 	MPI_Iprobe(MPI_ANY_SOURCE, TAG_CHAIN_HASH,MPI_COMM_WORLD, &flg, &sttsaux);
+      // 	i++;
+      // }
+      int src = sttsaux.MPI_SOURCE;
+      char buf [256];
       MPI_Status* stts = new MPI_Status;
-      MPI_Recv(buf, 1, *MPI_BLOCK, i, TAG_CHAIN_HASH,MPI_COMM_WORLD, stts);
-      int missing_blocks = last_block_in_chain->index - buf->index;
-      delete buf;
+      MPI_Recv(buf, 256, MPI_CHAR, src, TAG_CHAIN_HASH,MPI_COMM_WORLD, stts);
+      // int missing_blocks = last_block_in_chain->index - buf->index;
       delete stts;
-      Block *blcks = new Block[missing_blocks];
-      Block *it = last_block_in_chain;
-      for(int j = missing_blocks; j<=0; j--){
-        blcks[j]=*it;
-        it=&node_blocks[it->previous_block_hash];
+      Block sending_blocks [VALIDATION_BLOCKS];
+      Block *rBlock = last_block_in_chain;
+      while(rBlock->index !=0){
+        // blcks[j]=*it;
+        if(rBlock->block_hash == buf){
+          break;
+        }
+        rBlock=&node_blocks[rBlock->previous_block_hash];
       }
-      MPI_Send(blcks,missing_blocks,*MPI_BLOCK,i,TAG_CHAIN_RESPONSE,MPI_COMM_WORLD);
-      delete blcks;
+      for(int i = 0; i<VALIDATION_BLOCKS ; i++){
+        // blcks[j]=*it;
+        sending_blocks[i] = *rBlock;
+        if(rBlock->index == 1){break;}
+        rBlock=&node_blocks[rBlock->previous_block_hash];
+      }
+
+      MPI_Send(&sending_blocks,VALIDATION_BLOCKS,*MPI_BLOCK,src,TAG_CHAIN_RESPONSE,MPI_COMM_WORLD);
     }
   }
 

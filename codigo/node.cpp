@@ -8,26 +8,24 @@
 #include <atomic>
 #include <mpi.h>
 #include <map>
+#include <fstream>
 
 int total_nodes, mpi_rank;
 Block *last_block_in_chain;
 map<string,Block> node_blocks;
 pthread_spinlock_t spinlock;
+bool mequedeatras = false;
 
 
 //Cuando me llega una cadena adelantada, y tengo que pedir los nodos que me faltan
 //Si nos separan más de VALIDATION_BLOCKS bloques de distancia entre las cadenas, se descarta por seguridad
 bool verificar_y_migrar_cadena(const Block *rBlock, const MPI_Status *status){
 
-  printf("entre a verfic\n");
-
   MPI_Status sttsaux;
 
   //TODO: Enviar mensaje TAG_CHAIN_HASH
 
   MPI_Send(rBlock->block_hash,256,MPI_CHAR,rBlock->node_owner_number,TAG_CHAIN_HASH,MPI_COMM_WORLD);
-
-  printf("mande en verfic\n");
 
   Block *blockchain = new Block[VALIDATION_BLOCKS];
 
@@ -36,23 +34,14 @@ bool verificar_y_migrar_cadena(const Block *rBlock, const MPI_Status *status){
 
   //TODO: Verificar que los bloques recibidos
   //sean válidos y se puedan acoplar a la cadena
-  printf("recibi en verific\n");
 
   bool validate_msg = true;
   string aux_result;
 
-  printf("validate: %d\n",validate_msg);
-
   validate_msg &= string(blockchain[0].block_hash) == string(rBlock->block_hash);
-  printf("validate: %d\n",validate_msg);//PREGUNTAR
-
   validate_msg &= blockchain[0].index == rBlock->index;
-  printf("validate: %d\n",validate_msg);
-
-  block_to_hash(rBlock,aux_result);
+  block_to_hash(&blockchain[0],aux_result);
   validate_msg &= string(blockchain[0].block_hash) == aux_result;
-  
-
 
   int i = 1;
   for (;i<VALIDATION_BLOCKS;i++){
@@ -61,25 +50,20 @@ bool verificar_y_migrar_cadena(const Block *rBlock, const MPI_Status *status){
     }
     validate_msg &= string(blockchain[i-1].previous_block_hash) == string(blockchain[i].block_hash);
     validate_msg &= blockchain[i].index + 1 == blockchain[i-1].index;
-    if(!validate_msg){
-      printf("i = %d , index i : %d, index i-1: %d\n",i,blockchain[i].index,blockchain[i-1].index + 1);
-    }
+    block_to_hash(&blockchain[i],aux_result);
+    validate_msg &= string(blockchain[i].block_hash) == aux_result;
   }
 
-  printf("validate: %d\n",validate_msg);
   int received_blocks = i;
 
-
   if(validate_msg){
-
-      printf("msg valido\n");
 
       //TODO: si dentro de los bloques recibidos, alguno ya estaba adentro de nodeblocks(o el ultimo tiene indice 1),
       // entonces ya puedo reconstruir la cadena. agrego todos y actualizo lastblockinchain
       i = 0;
 
       while (i<received_blocks){
-        if(node_blocks.count(blockchain[i].block_hash) == 1 or blockchain[i].index == 1){
+        if(node_blocks.count(string(blockchain[i].block_hash)) == 1 or blockchain[i].index == 1){
           node_blocks[string(blockchain[0].block_hash)]=blockchain[0];
           *last_block_in_chain = blockchain[0];
           
@@ -87,8 +71,6 @@ bool verificar_y_migrar_cadena(const Block *rBlock, const MPI_Status *status){
             node_blocks[string(blockchain[j].block_hash)]=blockchain[j];
 
           }
-          printf("termino bien verificar\n");
-
           delete []blockchain;
           return true;
         }
@@ -119,14 +101,7 @@ bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
     //entonces lo agrego como nuevo último.
     if(rBlock->index == 1 and last_block_in_chain->index == 0){
 
-      // node_blocks[string(rBlock->block_hash)]=*rBlock;
       *last_block_in_chain = *rBlock;
-      // *last_block_in_chain->block_hash = *rBlock->block_hash;
-
-      // printf("[%d] rblock hash : %s , lastblock hash : %s",mpi_rank,rBlock->block_hash,last_block_in_chain->block_hash);
-      // printf("[%d] rblock index : %d , lastblock index : %d",mpi_rank,rBlock->index,last_block_in_chain->index);
-
-
       printf("[%d] Agregado a la lista bloque con index %d enviado por %d \n", mpi_rank, rBlock->index,status->MPI_SOURCE);
       return true;
     }
@@ -172,10 +147,10 @@ bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
     if(rBlock->index > last_block_in_chain->index + 1){
       printf("[%d] Perdí la carrera por varios contra %d \n", mpi_rank, status->MPI_SOURCE);
       bool res = verificar_y_migrar_cadena(rBlock,status);
+      mequedeatras = true;
       return res;
     }
     printf("[%d] nada tiene sentido \n",mpi_rank);
-    printf("[%d] mi rBlock index es: %d y el last block in chain index es: %d",mpi_rank, rBlock->index,last_block_in_chain->index);
   }
 
   printf("[%d] Error duro: Descarto el bloque recibido de %d porque no es válido \n",mpi_rank,status->MPI_SOURCE);
@@ -187,7 +162,7 @@ bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
 void broadcast_block(const Block *block){
   //No enviar a mí mismo
   //TODO: Completar
-  MPI_Request req;
+  // MPI_Request req;
   int i = mpi_rank-1, j = mpi_rank+1;
   while(i>=0 || j<total_nodes){
     if(i>=0){
@@ -211,6 +186,9 @@ void* proof_of_work(void *ptr){
     unsigned int mined_blocks = 0;
     while(true){
 
+      if(last_block_in_chain->index == MAX_BLOCKS or mequedeatras){
+        return NULL;
+      }
       block = *last_block_in_chain;
 
       //Preparar nuevo bloque
@@ -243,8 +221,8 @@ void* proof_of_work(void *ptr){
             //TODO: Mientras comunico, no responder mensajes de nuevos nodos
             broadcast_block(last_block_in_chain);
           }
-          pthread_spin_unlock(&spinlock);        
-        //mutexunlock
+          pthread_spin_unlock(&spinlock);       
+          
       }
 
     }
@@ -282,7 +260,7 @@ int node(){
   pthread_create(&thread, NULL, &proof_of_work,NULL);
 
       //TODO: Recibir mensajes de otros nodos
-  while(true){
+  while(last_block_in_chain->index != MAX_BLOCKS){
 
     int flg = 0;
     MPI_Status sttsaux;
@@ -297,6 +275,9 @@ int node(){
       validate_block_for_chain(buf, stts);
       pthread_spin_unlock(&spinlock);
 
+      if(mequedeatras){
+        break;
+      }
       delete buf;
       delete stts;
     }
@@ -311,23 +292,12 @@ int node(){
       MPI_Status* stts = new MPI_Status;
       MPI_Recv(buf, 256, MPI_CHAR, src, TAG_CHAIN_HASH,MPI_COMM_WORLD, stts);
       delete stts;
-      printf("[%d] hola1\n",mpi_rank);
 
       Block sending_blocks [VALIDATION_BLOCKS];
       Block *rBlock = last_block_in_chain;
-      printf("[%d] hola2\n",mpi_rank);
-
-      printf("%d\n",buf);
-
-
-      printf("%d\n",rBlock->block_hash);
-      // printf("%d\n",node_blocks[rBlock->previous_block_hash].previous_block_hash);
-
 
       while(rBlock->index !=0){
-        printf("[%d] mi index es : %d\n",mpi_rank,rBlock->index);
         if(string(rBlock->block_hash) == string(buf)){
-          printf("victory\n");
           break;
         }
         rBlock = &(node_blocks[string(rBlock->previous_block_hash)]);
@@ -339,18 +309,27 @@ int node(){
       }
 
 
-      // printf("[%d] hola3\n",mpi_rank);
-      printf("[%d] hash recibido : %d\n",mpi_rank,string(rBlock->block_hash));
-      printf("[%d] primer hash mandando : %d\n",mpi_rank,string(sending_blocks[0].block_hash));
+      // printf("[%d] hash recibido : %d\n",mpi_rank,string(rBlock->block_hash));
+      // printf("[%d] primer hash mandando : %d\n",mpi_rank,string(sending_blocks[0].block_hash));
 
       MPI_Send(&sending_blocks,VALIDATION_BLOCKS,*MPI_BLOCK,src,TAG_CHAIN_RESPONSE,MPI_COMM_WORLD);
-      printf("[%d] hola4\n",mpi_rank);
 
     }
   }
 
 
  	pthread_join(thread, NULL);
+
+  ofstream myfile;
+	myfile.open (to_string(mpi_rank)+".txt");
+
+
+  while(last_block_in_chain->index != 0){
+    myfile << last_block_in_chain->index << " " << last_block_in_chain->block_hash << endl;    
+    *last_block_in_chain = node_blocks[string(last_block_in_chain->previous_block_hash)];
+  }
+
+  myfile.close();
 
   delete last_block_in_chain;
   return 0;

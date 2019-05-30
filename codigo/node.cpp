@@ -191,11 +191,11 @@ void broadcast_termination(){
   int i = mpi_rank-1, j = mpi_rank+1;
   while(i>=0 || j<total_nodes){
     if(i>=0){
-      MPI_Send(&buf,1,MPI_INT,i,50,MPI_COMM_WORLD);
+      MPI_Send(&buf,1,MPI_INT,i,TAG_TERMINATION,MPI_COMM_WORLD);
       i--;
     }
     if(j<total_nodes){
-      MPI_Send(&buf,1,MPI_INT,j,50,MPI_COMM_WORLD);
+      MPI_Send(&buf,1,MPI_INT,j,TAG_TERMINATION,MPI_COMM_WORLD);
       j++;
     }
   }
@@ -209,10 +209,15 @@ void* proof_of_work(void *ptr){
     unsigned int mined_blocks = 0;
     while(true){
 
-      if(last_block_in_chain->index == MAX_BLOCKS or mequedeatras){
+      if(last_block_in_chain->index == MAX_BLOCKS){
         broadcast_termination();
         return NULL;
       }
+
+      if(mequedeatras){
+        return NULL;
+      }
+
       block = *last_block_in_chain;
 
       //Preparar nuevo bloque
@@ -281,13 +286,13 @@ int node(){
   //TODO: Crear thread para minar
 
   pthread_t thread;
-  int terminaron = 0;
+  int terminaron = 1;//empieza en 1 porque no va a recibir un msj que el mismo termino
 
   pthread_create(&thread, NULL, &proof_of_work,NULL);
 
       //TODO: Recibir mensajes de otros nodos
   // while(last_block_in_chain->index != MAX_BLOCKS){
-  while(terminaron < total_nodes-1){
+  while(terminaron < total_nodes){
     // if(terminaron >0){
     //   printf("[%d] terminaron : %d",mpi_rank,terminaron);
     // }
@@ -296,10 +301,10 @@ int node(){
     MPI_Status sttsaux;
       //TODO: Si es un mensaje de nuevo bloque, llamar a la función
       // validate_block_for_chain con el bloque recibido y el estado de MPI
-    MPI_Iprobe(MPI_ANY_SOURCE, 50,MPI_COMM_WORLD, &flg, &sttsaux);
+    MPI_Iprobe(MPI_ANY_SOURCE, TAG_TERMINATION,MPI_COMM_WORLD, &flg, &sttsaux);
     if(flg){
       int buf;
-      MPI_Recv(&buf, 1, MPI_INT, MPI_ANY_SOURCE, 50,MPI_COMM_WORLD, &sttsaux);
+      MPI_Recv(&buf, 1, MPI_INT, MPI_ANY_SOURCE, TAG_TERMINATION,MPI_COMM_WORLD, &sttsaux);
       terminaron += buf;
     }
     flg=0;
@@ -316,8 +321,9 @@ int node(){
       delete stts;
 
       if(mequedeatras){
-        // break;
         broadcast_termination();
+        //aviso que me quede atras, y termino mi ciclo 
+        break;
       }
     }
       //TODO: Si es un mensaje de pedido de cadena,
@@ -359,8 +365,11 @@ int node(){
   printf("[%d] Imprimiendo Log\n",mpi_rank);
 
   ofstream myfile;
-	myfile.open (to_string(mpi_rank)+".txt");
+	myfile.open ("log/"+to_string(mpi_rank)+".txt");
 
+  if(mequedeatras){
+    myfile << "Me quede atras en :" << endl;
+  }
 
   while(last_block_in_chain->index != 0){
     myfile << last_block_in_chain->index << " " << last_block_in_chain->block_hash << endl;    

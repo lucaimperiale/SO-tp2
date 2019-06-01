@@ -86,7 +86,7 @@ bool verificar_y_migrar_cadena(const Block *rBlock, const MPI_Status *status){
 
   //si el msg esta mal o no encontre el bloque que buscaba descarto todo y devuelvo false  
 
-  printf("termino mal verificar\n");
+  // printf("termino mal verificar\n");
 
   delete []blockchain;
   return false;

@@ -127,8 +127,6 @@ bool validate_block_for_chain(const Block *rBlock, const MPI_Status *status){
     if(rBlock->index == last_block_in_chain->index + 1 and string(rBlock->previous_block_hash) != string(last_block_in_chain->block_hash)){
       printf("[%d] Perdí la carrera por uno (%d) contra %d \n", mpi_rank, rBlock->index, status->MPI_SOURCE);
       bool res;
-      //esta condicion es para no pedirle bloques a un nodo que ya termino, 
-      //ya que me quedaria colgado esperando la respuesta
       res = verificar_y_migrar_cadena(rBlock,status);
       return res;
     }
